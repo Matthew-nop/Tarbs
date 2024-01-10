@@ -1,5 +1,17 @@
 #!/bin/sh
 
+usage() {
+	cat <<EOF >&2
+Usage: $(basename "$0") [-f] -p /home -o /mnt/backup/
+  -f        Continue even if the last session exited unexpectedly
+  -h        Display this help output
+  -l        Path to list of paths to tar (/etc/tarbs/targets)
+  -o        Output directory path for tar
+  -p        Path to tar (/home)
+EOF
+	exit 0
+}
+
 cleanup() {
 	if [ -f "$PID_PATH" ]; then
 		rm "$PID_PATH"
@@ -24,7 +36,7 @@ confirmContinue() {
 
 exitIfAlreadyRunning() {
 	tarbsPid=$1
-	
+
 	if ps -p $tarbsPid >/dev/null; then
 		echo "Tarbs is already running with PID: ${tarbsPid}" 1>&2
 		# Don't cleanup since files are owned by another process
@@ -65,7 +77,9 @@ tarbsExit() {
 
 tarPath() {
 	targetPath=$1
-	outputPath=$2
+	outputPath="${2}/$(generateFilename ${targetPath})"
+	tarOptions=$3
+	pxzOptions=$4
 	excludes=""
 
 	if [ ! -f "$targetPath" ]; then
@@ -73,20 +87,26 @@ tarPath() {
 		excludes=$(generateExcludes "$targetPath" "$targetExcludesPath")
 	fi
 
-	commandString="tar $TAR_ARGS -cf - $targetPath | pxz $PXZ_ARGS -T0 >$outputPath"
 	# Tar the filesystem
 	echo "Backing up    : $targetPath -> $outputPath"
 	echo "With excludes : $excludes"
-	echo "Full command  : \"tar $TAR_ARGS -cf - $targetPath | pxz $PXZ_ARGS >$outputPath\""
-	tar $TAR_ARGS -cf - $targetPath | pxz $PXZ_ARGS >$outputPath &
+	echo "Full command  : \"tar $tarOptions -cf - $targetPath | pxz $pxzOptions >$outputPath\""
+	tar $tarOptions -cf - $targetPath | pxz $pxzOptions >$outputPath &
 }
 
 tarTargets() {
-	targets=$1
-	
+	targetsPath=$1
+	outputPath=$2
+	tarOptions=$3
+	pxzOptions=$4
+
 	while read t; do
-		tarPath "$t" "${STORE_PATH}/$(generateFilename "$t")"
-	done <"$targets"
+		tarPath \
+			"$t" \
+			"$outputPath" \
+			"$tarOptions" \
+			"$pxzOptions"
+	done <"$targetsPath"
 }
 
 # =============================================================================================
@@ -95,18 +115,54 @@ tarTargets() {
 
 set -e
 
-# Filepaths
-STORE_PATH="/mnt/Corundum/Backup/Ilmenite"
-TARGETS_PATH="/etc/tarbs/targets"
+# Compression settings
+DEFAULT_TAR_ARGS="-P -p --xattrs-include='*.*' --one-file-system"
+DEFAULT_PXZ_ARGS="-5 -T8"
+
+# Other settings
+DATE_STRING="$(date -u +'%Y-%m-%dT%H-%M')"
+EXCLUDES_FILENAME=".tarbs.excludes"
 PID_PATH="/etc/tarbs/pid"
 LOCKFILE_PATH="/etc/tarbs/lockfile"
 
-# Other consts
-COMPRESSION_LEVEL="-7"
-DATE_STRING="$(date -u +'%Y-%m-%dT%H-%M')"
-TAR_ARGS="-P -p --xattrs-include='*.*' --one-file-system"
-PXZ_ARGS="-4 -T8"
-EXCLUDES_FILENAME=".tarbs.excludes"
+# User input
+dontPromptForCleanup=false
+targetPath=""
+targetsPath=""
+outputPath=""
+while getopts "fhp:l:o:" flag; do
+	case $flag in
+	f) # Save to clipboard
+		dontPromptForCleanup=true
+		;;
+	h) # Display script help information
+		usage
+		;;
+	o) # Delete last output
+		outputPath=$OPTARG
+		;;
+	p) # Path to target with tar
+		targetPath=$OPTARG
+		;;
+	l) # Path to a list of paths to target with tar
+		targetsPath=$OPTARG
+		;;
+	\?) # Handle invalid options
+		exit 1
+		;;
+	esac
+done
+
+if [[ -z "$targetPath" && -z "$targetsPath" ]]; then
+	echo "No target or list of targets was specified" >&2
+	exit 1
+elif [[ ! -z "$targetPath" && ! -z "$targetsPath" ]]; then
+	echo "Only a target or list of targets can be specified" >&2
+	exit 1
+elif [[ -z $outputPath ]]; then
+	echo "No output path was specified" >&2
+	exit 1
+fi
 
 # Escalate with sudo if not root
 [ "$UID" -eq 0 ] || exec sudo "$0" "$@"
@@ -122,7 +178,7 @@ trap 'kill -TERM -$( ps -o pgid= $$ | tr -d \ )' EXIT
 	if [ -f "$PID_PATH" ]; then
 		exitIfAlreadyRunning $(cat "$PID_PATH")
 		echo "Tarbs previously exited unsuccessfully, please verify file integrity." 1>&2
-		echo "Remove previous PID file and run Targs again? (Y/N)" 1>&2
+		echo "Remove previous PID file and run Tarbs again? (Y/N)" 1>&2
 		confirmContinue || exit 1
 	fi
 
@@ -132,21 +188,24 @@ trap 'kill -TERM -$( ps -o pgid= $$ | tr -d \ )' EXIT
 # Done with flock, safe to remove the lockfile
 rm "$LOCKFILE_PATH"
 
-if [ ! -d "$STORE_PATH" ] && [ ! -L "$STORE_PATH" ]; then
-	echo "$STORE_PATH is not a directory symlink" 1>&2
+if [ ! -d "$outputPath" ] && [ ! -L "$outputPath" ]; then
+	echo "$outputPath is not a directory or symlink" 1>&2
 	tarbsExit 1
 fi
 
 # Begin backing up targets
-if [ -f "$TARGETS_PATH" ]; then
-	tarTargets "$TARGETS_PATH"
-elif [ -d "$TARGETS_PATH" ] || [ -L "$TARGETS_PATH" ]; then
-	for targetsFile in "$TARGETS_PATH"; do
-		tarTargets "$TARGETS_PATH"
-	done
-else
-	echo "No targets file exists at ${TARGETS_PATH}"
-	tarbsExit 1
+if [[ ! -z "$targetPath" ]]; then
+	tarPath \
+		"$targetPath" \
+		"$outputPath" \
+		"$DEFAULT_TAR_ARGS" \
+		"$DEFAULT_PXZ_ARGS"
+elif [[ ! -z "$targetsPath" ]]; then
+	tarTargets \
+		"$targetsPath" \
+		"$outputPath" \
+		"$DEFAULT_TAR_ARGS" \
+		"$DEFAULT_PXZ_ARGS"
 fi
 
 wait
