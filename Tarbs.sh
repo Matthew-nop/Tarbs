@@ -1,8 +1,8 @@
-#!/bin/sh
+#!/bin/bash
 
 usage() {
 	cat <<EOF >&2
-Usage: $(basename "$0") [-f] -p /home -o /mnt/backup/
+Usage: $(basename "$0") [-f] [-p /home] [-l /etc/tarbs/targets] -o /mnt/backup/
   -f        Continue even if the last session exited unexpectedly
   -h        Display this help output
   -l        Path to list of paths to tar (/etc/tarbs/targets)
@@ -12,14 +12,8 @@ EOF
 	exit 0
 }
 
-cleanup() {
-	if [ -f "$PID_PATH" ]; then
-		rm "$PID_PATH"
-	fi
-}
-
 confirmContinue() {
-	read continue
+	read -r continue
 	case "$continue" in
 	[yY][eE][sS] | [yY])
 		return 0
@@ -37,25 +31,11 @@ confirmContinue() {
 exitIfAlreadyRunning() {
 	tarbsPid=$1
 
-	if ps -p $tarbsPid >/dev/null; then
+	if ps -p "$tarbsPid" >/dev/null; then
 		echo "Tarbs is already running with PID: ${tarbsPid}" 1>&2
 		# Don't cleanup since files are owned by another process
 		exit 1
 	fi
-}
-
-generateExcludes() {
-	base=$1
-	excludesListPath=$2
-	excludes=""
-
-	if [ -f "$excludesListPath" ]; then
-		while read l; do
-			excludes="${excludes} --exclude=\"${base}/${l}\""
-		done <"$excludesListPath"
-	fi
-
-	echo -n "$excludes"
 }
 
 generateFilename() {
@@ -71,42 +51,11 @@ generateFilename() {
 }
 
 tarbsExit() {
-	cleanup
-	exit $1
-}
-
-tarPath() {
-	targetPath=$1
-	outputPath="${2}/$(generateFilename ${targetPath})"
-	tarOptions=$3
-	pxzOptions=$4
-	excludes=""
-
-	if [ ! -f "$targetPath" ]; then
-		targetExcludesPath="${targetPath}/${EXCLUDES_FILENAME}"
-		excludes=$(generateExcludes "$targetPath" "$targetExcludesPath")
+	if [ -f "$PID_PATH" ]; then
+		rm "$PID_PATH"
 	fi
 
-	# Tar the filesystem
-	echo "Backing up    : $targetPath -> $outputPath"
-	echo "With excludes : $excludes"
-	echo "Full command  : \"tar $tarOptions -cf - $targetPath | pxz $pxzOptions >$outputPath\""
-	tar $tarOptions -cf - $targetPath | pxz $pxzOptions >$outputPath &
-}
-
-tarTargets() {
-	targetsPath=$1
-	outputPath=$2
-	tarOptions=$3
-	pxzOptions=$4
-
-	while read t; do
-		tarPath \
-			"$t" \
-			"$outputPath" \
-			"$tarOptions" \
-			"$pxzOptions"
-	done <"$targetsPath"
+	exit "$1"
 }
 
 # =============================================================================================
@@ -116,8 +65,8 @@ tarTargets() {
 set -e
 
 # Compression settings
-DEFAULT_TAR_ARGS="-P -p --xattrs-include='*.*' --one-file-system"
-DEFAULT_PXZ_ARGS="-5 -T8"
+DEFAULT_TAR_ARGS=("-p" "--xattrs-include='*.*'" "--one-file-system")
+DEFAULT_PXZ_ARGS=()
 
 # Other settings
 DATE_STRING="$(date -u +'%Y-%m-%dT%H-%M')"
@@ -129,7 +78,7 @@ LOCKFILE_PATH="/etc/tarbs/lockfile"
 dontPromptForCleanup=false
 targetPath=""
 targetsPath=""
-outputPath=""
+outputDirPath=""
 while getopts "fhp:l:o:" flag; do
 	case $flag in
 	f) # Save to clipboard
@@ -139,7 +88,7 @@ while getopts "fhp:l:o:" flag; do
 		usage
 		;;
 	o) # Delete last output
-		outputPath=$OPTARG
+		outputDirPath=$OPTARG
 		;;
 	p) # Path to target with tar
 		targetPath=$OPTARG
@@ -154,13 +103,10 @@ while getopts "fhp:l:o:" flag; do
 done
 
 if [[ -z "$targetPath" && -z "$targetsPath" ]]; then
-	echo "No target or list of targets was specified" >&2
+	echo "A target or list of targets must be specified" 1>&2
 	exit 1
-elif [[ ! -z "$targetPath" && ! -z "$targetsPath" ]]; then
-	echo "Only a target or list of targets can be specified" >&2
-	exit 1
-elif [[ -z $outputPath ]]; then
-	echo "No output path was specified" >&2
+elif [[ -z $outputDirPath ]]; then
+	echo "An output path must be specified" 1>&2
 	exit 1
 fi
 
@@ -183,30 +129,56 @@ trap 'kill -TERM -$( ps -o pgid= $$ | tr -d \ )' EXIT
 	fi
 
 	echo $$ >"$PID_PATH"
+	echo "Syncing..."
 	sync
 ) 9>"$LOCKFILE_PATH" || exit 1
 # Done with flock, safe to remove the lockfile
 rm "$LOCKFILE_PATH"
 
-if [ ! -d "$outputPath" ] && [ ! -L "$outputPath" ]; then
-	echo "$outputPath is not a directory or symlink" 1>&2
+if [ ! -d "$outputDirPath" ] && [ ! -L "$outputDirPath" ]; then
+	echo "$outputDirPath is not a directory or symlink" 1>&2
 	tarbsExit 1
 fi
 
-# Begin backing up targets
-if [[ ! -z "$targetPath" ]]; then
-	tarPath \
-		"$targetPath" \
-		"$outputPath" \
-		"$DEFAULT_TAR_ARGS" \
-		"$DEFAULT_PXZ_ARGS"
-elif [[ ! -z "$targetsPath" ]]; then
-	tarTargets \
-		"$targetsPath" \
-		"$outputPath" \
-		"$DEFAULT_TAR_ARGS" \
-		"$DEFAULT_PXZ_ARGS"
+targets=()
+
+# Populate targets array
+if [[ -n "$targetPath" ]]; then
+	targets+=("$targetPath")
 fi
+if [[ -n "$targetsPath" ]]; then
+	while read -r t; do
+		targets+=("$t")
+	done <"$targetsPath"
+fi
+
+# Tar targets
+for target in "${targets[@]}"; do
+	excludes=()
+	outputPath="${outputDirPath}/$(generateFilename ${target})"
+
+	echo "Backing up    : $target -> $outputPath"
+	echo "Tar args      : ${DEFAULT_TAR_ARGS[*]}"
+	echo "pxz args      : ${DEFAULT_PXZ_ARGS[*]}"
+	if [ -f "$target" ]; then
+		echo "Full command  : \"tar ${DEFAULT_TAR_ARGS[*]} -cf - $target | pxz ${DEFAULT_PXZ_ARGS[*]}} > $outputPath\""
+		tar "${DEFAULT_TAR_ARGS[@]}" -cf - "$target" | pxz "${DEFAULT_PXZ_ARGS[@]}" > "$outputPath" &
+
+	elif [[ -d "$target"  || ( -L "$target" && -e "$target" )]]; then
+		pushd "$target" > /dev/null
+		if [ -f "$EXCLUDES_FILENAME" ]; then
+			while read -r l; do
+				excludes+=("--exclude=./${l}")
+			done <"$EXCLUDES_FILENAME"
+		fi
+
+		echo "PWD           : ${PWD}"
+		echo "Excludes      : ${excludes[*]}"
+		echo "Full command  : \"tar ${DEFAULT_TAR_ARGS[*]} ${excludes[*]} -cf - . | pxz ${DEFAULT_PXZ_ARGS[*]}} > $outputPath\""
+		tar "${excludes[@]}" "${DEFAULT_TAR_ARGS[@]}" -cf - . | pxz "${DEFAULT_PXZ_ARGS[@]}" > "$outputPath" &
+		popd
+	fi
+done
 
 wait
 tarbsExit 0
