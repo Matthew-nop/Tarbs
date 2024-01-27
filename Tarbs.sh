@@ -8,6 +8,7 @@ Usage: $(basename "$0") [-f] [-p /home] [-l /etc/tarbs/targets] -o /mnt/backup/
   -l        Path to list of paths to tar (/etc/tarbs/targets)
   -o        Output directory path for tar
   -p        Path to tar (/home)
+  -u        Run Tarbs with user permissions
 EOF
 	exit 0
 }
@@ -76,10 +77,11 @@ LOCKFILE_PATH="/etc/tarbs/lockfile"
 
 # User input
 dontPromptForCleanup=false
+userPermissions=false
 targetPath=""
 targetsPath=""
 outputDirPath=""
-while getopts "fhp:l:o:" flag; do
+while getopts "fhp:l:o:u" flag; do
 	case $flag in
 	f) # Save to clipboard
 		dontPromptForCleanup=true
@@ -96,6 +98,9 @@ while getopts "fhp:l:o:" flag; do
 	l) # Path to a list of paths to target with tar
 		targetsPath=$OPTARG
 		;;
+	u) # Run with user permissions
+		userPermissions=true
+		;;
 	\?) # Handle invalid options
 		exit 1
 		;;
@@ -110,8 +115,8 @@ elif [[ -z $outputDirPath ]]; then
 	exit 1
 fi
 
-# Escalate with sudo if not root
-[ "$UID" -eq 0 ] || exec sudo "$0" "$@"
+# If '-u' isn't set and not root, escalate with sudo  
+$userPermissions || [ "$UID" -eq 0 ] || exec sudo "$0" "$@"
 
 # Kill process group on exit
 trap 'kill -TERM -$( ps -o pgid= $$ | tr -d \ )' EXIT
