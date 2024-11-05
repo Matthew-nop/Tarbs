@@ -158,6 +158,7 @@ if [[ -n "$targetsPath" ]]; then
 fi
 
 # Tar targets
+umask 0077
 for target in "${targets[@]}"; do
 	excludes=()
 	outputPath="${outputDirPath}/$(generateFilename ${target})"
