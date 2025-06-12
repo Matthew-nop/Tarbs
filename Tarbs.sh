@@ -181,7 +181,7 @@ for target in "${targets[@]}"; do
 		echo "Excludes      : ${excludes[*]}"
 		echo "Full command  : \"tar ${DEFAULT_TAR_ARGS[*]} ${excludes[*]} -cf - . | pxz ${DEFAULT_PXZ_ARGS[*]} > $outputPath\""
 		tar "${excludes[@]}" "${DEFAULT_TAR_ARGS[@]}" -cf - . | pxz "${DEFAULT_PXZ_ARGS[@]}" > "$outputPath" &
-		popd
+		popd > /dev/null
 	fi
 done
 
