@@ -125,7 +125,7 @@ trap 'kill -TERM -$( ps -o pgid= $$ | tr -d \ )' EXIT
 		exitIfAlreadyRunning $(cat "$PID_PATH")
 		echo "Tarbs previously exited unsuccessfully, please verify file integrity." 1>&2
 		echo "Remove previous PID file and run Tarbs again? (Y/N)" 1>&2
-		confirmContinue || exit 1
+		$dontPromptForCleanup || confirmContinue || exit 1
 	fi
 
 	echo $$ >"$PID_PATH"
