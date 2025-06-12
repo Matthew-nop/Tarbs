@@ -63,8 +63,6 @@ tarbsExit() {
 # TARBS START
 # =============================================================================================
 
-set -e
-
 # Compression settings
 DEFAULT_TAR_ARGS=("-p" "--xattrs-include='*.*'" "--one-file-system")
 DEFAULT_PXZ_ARGS=()
@@ -81,27 +79,30 @@ userPermissions=false
 targetPath=""
 targetsPath=""
 outputDirPath=""
+
+set -e
+
 while getopts "fhp:l:o:u" flag; do
 	case $flag in
-	f) # Save to clipboard
+	f)
 		dontPromptForCleanup=true
 		;;
-	h) # Display script help information
+	h)
 		usage
 		;;
-	o) # Delete last output
+	o)
 		outputDirPath=$OPTARG
 		;;
-	p) # Path to target with tar
+	p)
 		targetPath=$OPTARG
 		;;
-	l) # Path to a list of paths to target with tar
+	l)
 		targetsPath=$OPTARG
 		;;
-	u) # Run with user permissions
+	u)
 		userPermissions=true
 		;;
-	\?) # Handle invalid options
+	\?)
 		exit 1
 		;;
 	esac
@@ -115,7 +116,7 @@ elif [[ -z $outputDirPath ]]; then
 	exit 1
 fi
 
-# If '-u' isn't set and not root, escalate with sudo  
+# If '-u' isn't set and not root, escalate with sudo
 $userPermissions || [ "$UID" -eq 0 ] || exec sudo "$0" "$@"
 
 # Kill process group on exit
@@ -168,10 +169,10 @@ for target in "${targets[@]}"; do
 	echo "pxz args      : ${DEFAULT_PXZ_ARGS[*]}"
 	if [ -f "$target" ]; then
 		echo "Full command  : \"tar ${DEFAULT_TAR_ARGS[*]} -cf - $target | pxz ${DEFAULT_PXZ_ARGS[*]} > $outputPath\""
-		tar "${DEFAULT_TAR_ARGS[@]}" -cf - "$target" | pxz "${DEFAULT_PXZ_ARGS[@]}" > "$outputPath" &
+		tar "${DEFAULT_TAR_ARGS[@]}" -cf - "$target" | pxz "${DEFAULT_PXZ_ARGS[@]}" >"$outputPath" &
 
-	elif [[ -d "$target"  || ( -L "$target" && -e "$target" )]]; then
-		pushd "$target" > /dev/null
+	elif [[ -d "$target" || (-L "$target" && -e "$target") ]]; then
+		pushd "$target" >/dev/null
 		if [ -f "$EXCLUDES_FILENAME" ]; then
 			while read -r l; do
 				excludes+=("--exclude=./${l}")
@@ -181,10 +182,12 @@ for target in "${targets[@]}"; do
 		echo "PWD           : ${PWD}"
 		echo "Excludes      : ${excludes[*]}"
 		echo "Full command  : \"tar ${DEFAULT_TAR_ARGS[*]} ${excludes[*]} -cf - . | pxz ${DEFAULT_PXZ_ARGS[*]} > $outputPath\""
-		tar "${excludes[@]}" "${DEFAULT_TAR_ARGS[@]}" -cf - . | pxz "${DEFAULT_PXZ_ARGS[@]}" > "$outputPath" &
-		popd > /dev/null
+		tar "${excludes[@]}" "${DEFAULT_TAR_ARGS[@]}" -cf - . | pxz "${DEFAULT_PXZ_ARGS[@]}" >"$outputPath" &
+		popd >/dev/null
 	fi
+	echo ""
 done
 
 wait
+echo $'===============================\nTarbs finished with all targets\n==============================='
 tarbsExit 0
