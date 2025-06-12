@@ -166,7 +166,7 @@ for target in "${targets[@]}"; do
 	echo "Tar args      : ${DEFAULT_TAR_ARGS[*]}"
 	echo "pxz args      : ${DEFAULT_PXZ_ARGS[*]}"
 	if [ -f "$target" ]; then
-		echo "Full command  : \"tar ${DEFAULT_TAR_ARGS[*]} -cf - $target | pxz ${DEFAULT_PXZ_ARGS[*]}} > $outputPath\""
+		echo "Full command  : \"tar ${DEFAULT_TAR_ARGS[*]} -cf - $target | pxz ${DEFAULT_PXZ_ARGS[*]} > $outputPath\""
 		tar "${DEFAULT_TAR_ARGS[@]}" -cf - "$target" | pxz "${DEFAULT_PXZ_ARGS[@]}" > "$outputPath" &
 
 	elif [[ -d "$target"  || ( -L "$target" && -e "$target" )]]; then
@@ -179,7 +179,7 @@ for target in "${targets[@]}"; do
 
 		echo "PWD           : ${PWD}"
 		echo "Excludes      : ${excludes[*]}"
-		echo "Full command  : \"tar ${DEFAULT_TAR_ARGS[*]} ${excludes[*]} -cf - . | pxz ${DEFAULT_PXZ_ARGS[*]}} > $outputPath\""
+		echo "Full command  : \"tar ${DEFAULT_TAR_ARGS[*]} ${excludes[*]} -cf - . | pxz ${DEFAULT_PXZ_ARGS[*]} > $outputPath\""
 		tar "${excludes[@]}" "${DEFAULT_TAR_ARGS[@]}" -cf - . | pxz "${DEFAULT_PXZ_ARGS[@]}" > "$outputPath" &
 		popd
 	fi
